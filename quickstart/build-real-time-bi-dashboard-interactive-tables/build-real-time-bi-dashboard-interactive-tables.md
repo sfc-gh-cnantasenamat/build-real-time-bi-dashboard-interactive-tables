@@ -15,7 +15,7 @@ Traditional analytical warehouses are optimized for large batch scans. When a da
 
 In this quickstart, you will build a complete real-time analytics system for a synthetic e-commerce store. A **Snowpark Container Services (SPCS)** container generates orders server-side at a configurable rate, writing each tick into an interactive table through a stored procedure. An **interactive warehouse** keeps that table's cache warm and serves millisecond-latency queries to a **Streamlit in Snowflake** dashboard that refreshes automatically every few seconds.
 
-Everything runs inside a single Snowflake account — no Kafka, no external message bus, no managed services outside Snowflake.
+Everything runs inside a single Snowflake account. No Kafka, no external message bus, no managed services outside Snowflake.
 
 ![Architecture diagram showing the data flow between the SPCS simulation service, stored procedure, interactive table, interactive warehouse, history and control tables, maintenance tasks, and the Streamlit dashboard.](assets/architecture-diagram.png)
 
@@ -31,7 +31,7 @@ Everything runs inside a single Snowflake account — no Kafka, no external mess
 
 ### What You'll Build
 You will assemble five tightly integrated Snowflake objects into a single, self-contained real-time analytics system:
-- An SPCS simulation service continuously generates synthetic e-commerce orders and writes them — via a stored procedure — into an interactive table
+- An SPCS simulation service continuously generates synthetic e-commerce orders and writes them, via a stored procedure, into an interactive table
 - An interactive warehouse keeps that table warm for sub-second dashboard queries
 - A history table accumulates every tick for trend charts and heatmaps
 - A control table acts as the command channel between the dashboard and the simulation service
@@ -71,7 +71,7 @@ The repository has the following structure:
 <!-- ------------------------ -->
 ## Create Snowflake Objects
 
-All setup SQL is in `scripts/setup.sql`. Open a Snowsight worksheet and paste the blocks below, or run the full file in one shot. The script is idempotent — safe to re-run.
+All setup SQL is in `scripts/setup.sql`. Open a Snowsight worksheet and paste the blocks below, or run the full file in one shot. The script is idempotent, so it is safe to re-run.
 
 Here is a summary of the Snowflake objects you will create:
 
@@ -114,7 +114,7 @@ USE WAREHOUSE INTERACTIVE_ANALYTICS_WH;
 
 ### Interactive table
 
-`ORDERS` holds the current tick snapshot — only the most recently generated set of orders. The `CLUSTER BY` key matches the dashboard's `WHERE` clause: a recent time window filtered by region. Truncating the timestamp to the minute keeps the clustering key low-cardinality and prunes efficiently for "last N minutes" queries.
+`ORDERS` holds the current tick snapshot: only the most recently generated set of orders. The `CLUSTER BY` key matches the dashboard's `WHERE` clause: a recent time window filtered by region. Truncating the timestamp to the minute keeps the clustering key low-cardinality and prunes efficiently for "last N minutes" queries.
 
 ```sql
 CREATE OR REPLACE INTERACTIVE TABLE INTERACTIVE_STREAMING_DEMO.PUBLIC.ORDERS (
@@ -142,10 +142,15 @@ ALTER WAREHOUSE INTERACTIVE_ANALYTICS_IWH RESUME IF SUSPENDED;
 
 ALTER WAREHOUSE INTERACTIVE_ANALYTICS_IWH
   ADD TABLES (INTERACTIVE_STREAMING_DEMO.PUBLIC.ORDERS);
+
+-- Switch back: interactive warehouses cannot run INSERT, UPDATE or DELETE.
+USE WAREHOUSE INTERACTIVE_ANALYTICS_WH;
 ```
 
+Creating a warehouse makes it the current warehouse for your session. The final `USE WAREHOUSE` switches back to the standard warehouse, because an interactive warehouse rejects DML such as the `INSERT` statements in the next steps with `Cannot run statement type 'INSERT' on an interactive warehouse`.
+
 Positive
-: Interactive warehouses enforce a **5-second query timeout** and a **24-hour minimum auto-suspend**. Keep dashboard queries selective — narrow projections, filters aligned with the clustering key — for consistent sub-second latency.
+: Interactive warehouses enforce a **5-second query timeout** and a **24-hour minimum auto-suspend**. Keep dashboard queries selective (narrow projections, filters aligned with the clustering key) for consistent sub-second latency.
 
 ### History and control tables
 
@@ -316,7 +321,7 @@ CREATE COMPUTE POOL IF NOT EXISTS INTERACTIVE_ANALYTICS_POOL
 
 CREATE IMAGE REPOSITORY IF NOT EXISTS INTERACTIVE_STREAMING_DEMO.PUBLIC.SIM_REPO;
 
--- Note the repository_url in the output — you will use it in the next step.
+-- Note the repository_url in the output; you will use it in the next step.
 SHOW IMAGE REPOSITORIES LIKE 'SIM_REPO'
   IN SCHEMA INTERACTIVE_STREAMING_DEMO.PUBLIC;
 ```
@@ -373,6 +378,14 @@ SELECT
 FROM TABLE(GENERATOR(ROWCOUNT => 2000));
 ```
 
+### Verify the objects
+
+Open **Catalog > Database Explorer > INTERACTIVE_STREAMING_DEMO > PUBLIC** in Snowsight. The schema should list nine objects:
+
+![Snowsight catalog view of the PUBLIC schema listing APP_STAGE, the two INTERACTIVE_ANALYTICS tasks, the ORDERS interactive table, ORDERS_HISTORY, an ORDERS-STREAMING pipe, SIM_REPO, SIMULATION_CONTROL, and SP_SIMULATE_TICK.](assets/snowsight-schema-objects.png)
+
+`ORDERS` is listed with the type **Interactive table**, which confirms that the `CREATE INTERACTIVE TABLE` statement worked. You will also see a pipe called `ORDERS-STREAMING` that you did not create yourself. Snowflake adds this default Snowpipe Streaming pipe to every interactive table automatically; this quickstart does not use it, and it is removed when you drop the database. The warehouses and the compute pool are account-level objects, so they appear under **Compute** rather than in this list.
+
 <!-- ------------------------ -->
 ## Build the Container
 
@@ -380,10 +393,11 @@ The simulation service is a lightweight Python container. It reads `SIMULATION_C
 
 ### How the service authenticates
 
-When running inside SPCS, the container automatically receives an OAuth token from Snowflake at `/snowflake/session/token`. The service reads this token and uses it to connect — no password or key-pair is needed.
+When running inside SPCS, the container automatically receives an OAuth token from Snowflake at `/snowflake/session/token`. The service reads this token and uses it to connect, so no password or key-pair is needed.
 
 ```python
 # spcs/simulation_service.py (key excerpt)
+WAREHOUSE = os.environ.get("SNOWFLAKE_WAREHOUSE", "INTERACTIVE_ANALYTICS_WH")
 TOKEN_FILE = "/snowflake/session/token"
 
 def connect():
@@ -394,8 +408,10 @@ def connect():
         account=os.environ["SNOWFLAKE_ACCOUNT"],
         authenticator="oauth",
         token=token,
+        database="INTERACTIVE_STREAMING_DEMO",
+        schema="PUBLIC",
         role="ACCOUNTADMIN",
-        warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "INTERACTIVE_ANALYTICS_WH"),
+        warehouse=WAREHOUSE,
     )
 ```
 
@@ -417,6 +433,9 @@ docker login <your_registry_url>
 
 When prompted, enter your Snowflake username and password (or a [programmatic access token](https://docs.snowflake.com/en/user-guide/programmatic-access/programmatic-access-tokens-intro)).
 
+Positive
+: If you have the [Snowflake CLI](https://docs.snowflake.com/en/developer-guide/snowflake-cli/index) installed and a connection configured, `snow spcs image-registry login` logs Docker in to your account's registry using that connection, so you don't have to type a password.
+
 ### Build, tag, and push the image
 
 From the root of the cloned repository:
@@ -432,6 +451,10 @@ docker push <your_registry_url>/simulation:latest
 
 Positive
 : Building on Apple Silicon (arm64)? Add `--platform linux/amd64` to `docker build` so the image runs correctly on Snowflake's x86_64 compute pool nodes.
+
+To confirm the push, open `SIM_REPO` in Snowsight under **Catalog > Database Explorer > INTERACTIVE_STREAMING_DEMO > PUBLIC > Image Repositories**. The `simulation` image should be listed with a fresh timestamp and its `sha256` digest, which matches the digest that `docker push` printed:
+
+![Snowsight view of the SIM_REPO image repository showing the simulation image, created just now, with its sha256 digest.](assets/snowsight-image-repository.png)
 
 <!-- ------------------------ -->
 ## Deploy Everything
@@ -463,7 +486,7 @@ CREATE SERVICE IF NOT EXISTS
   MAX_INSTANCES = 1;
 ```
 
-Wait until the status column shows `RUNNING` (typically 30–60 seconds):
+Wait until the status column shows `RUNNING` (typically 30 to 60 seconds):
 
 ```sql
 SHOW SERVICES LIKE 'INTERACTIVE_ANALYTICS_SVC'
@@ -478,6 +501,17 @@ SELECT SYSTEM$GET_SERVICE_LOGS(
   '0', 'simulator', 50
 );
 ```
+
+A healthy service logs its configuration, connects with the SPCS OAuth token, and resets the idle timer. It then waits quietly until you press **Start** in the dashboard:
+
+```
+INFO Simulation service starting (interval=1.0s, idle_suspend=3600s, rows_base=100, cache_ticks=5)
+INFO Connecting to GLOBAL Snowflake domain
+INFO Connected to Snowflake as ACCOUNTADMIN
+INFO Idle timer reset
+```
+
+Once the simulation is running, a `tick N: ... rows` line appears for every call to `SP_SIMULATE_TICK`.
 
 ### Upload the Streamlit dashboard
 
@@ -499,39 +533,58 @@ CREATE OR REPLACE STREAMLIT INTERACTIVE_STREAMING_DEMO.PUBLIC.LIVE_ORDERS_DASHBO
   TITLE           = 'Live Orders Dashboard';
 ```
 
-Open the app in Snowsight under **Projects > Streamlit > LIVE_ORDERS_DASHBOARD**.
+Open the app in Snowsight under **Projects > Streamlit > LIVE_ORDERS_DASHBOARD**. The first launch takes a minute or two while Snowflake builds the Python environment from `environment.yml`. That file pins `streamlit=1.52.2` from the Snowflake Anaconda channel because the dashboard's auto-refresh relies on `st.fragment(run_every=...)`, which the older default runtime does not support. Leave the pin in place unless you have tested the app on another version.
+
+Before you start the simulation, the dashboard looks like this:
+
+![The Live Orders Dashboard before the simulation starts: the sidebar shows Stopped with an auto-suspend countdown, the KPI tiles read 0, and a banner says the simulation is stopped.](assets/dashboard-first-open.png)
+
+The sidebar status reads **Stopped**, with a countdown to the service's idle auto-suspend. The KPI tiles read zero because `ORDERS_HISTORY` is still empty. The 2,000 rows you seeded live only in `ORDERS`, which holds the current tick snapshot, so they don't count as history. The yellow banner and the empty chart areas both point you to the **Start** button.
 
 <!-- ------------------------ -->
 ## Explore the Dashboard
 
 ### Start the simulation
 
-In the sidebar, click **Start** in the **Simulation** section. If the SPCS service is suspended, the app resumes it automatically before enabling the data feed. The **Orders over time** chart begins updating every few seconds as new ticks arrive.
+In the sidebar, click **Start** in the **Simulation** section. If the SPCS service is suspended, the button reads **Start (resumes service)** and the app resumes the service automatically before enabling the data feed. Within a few seconds the status turns green and reads **Running**, and the **Orders over time** chart begins filling in as each tick arrives:
+
+![The dashboard with the simulation running: the sidebar shows Running, the KPI tiles show 25.5K total orders, 4.5K orders in the last 15 minutes, $2.7M revenue, 5 regions and 297 orders per minute, and the Orders over time chart shows a live area series.](assets/dashboard-running.png)
+
+Each point on the chart is a 10-second bucket from `ORDERS_HISTORY`, and the orange dot marks the latest bucket. The flat ramp in the middle of this screenshot is a period when the simulation was stopped and later restarted, which shows that history survives a stop and start.
 
 ### KPI tiles
 
-The top row shows four live metrics:
+The top row shows five live metrics:
 
-- **Total Orders** — cumulative order count since the last session reset.
-- **Orders (last window)** — order count within the selected time window.
-- **Revenue (last window)** — total revenue within the time window.
-- **Avg order value** — average order amount within the time window.
+- **Total orders**: the cumulative order count since the last session reset, read from `SIMULATION_CONTROL`. The green badge underneath (for example **+20/tick**) is the size of the current tick, read from the `ORDERS` interactive table through `INTERACTIVE_ANALYTICS_IWH`.
+- **Orders (15m)**: the order count within the selected time window. The label follows the **Time window** setting, and reads **Orders (all)** when the window is **All time** or the simulation is stopped.
+- **Revenue**: total revenue within the time window.
+- **Regions**: the number of regions with orders in the window.
+- **Orders/min**: the average order rate across the window.
+
+Large values are shortened (for example 25.5K or $2.7M) so the tiles stay readable on narrow screens.
 
 ### Adjust settings
 
 The **Settings** sidebar section exposes three controls:
 
-- **Time window** — how far back the charts look (5 min, 15 min, 30 min, 60 min, or All time).
-- **Tick interval** — how often the dashboard re-queries Snowflake (1–30 seconds).
-- **Rate multiplier** — scales the order volume per tick (0.5× to 3×). Changes take effect within the next tick cycle.
+- **Time window**: how far back the charts look (5 min, 15 min, 30 min, 60 min, or All time).
+- **Tick interval**: how often the dashboard re-queries Snowflake (1 to 30 seconds).
+- **Rate multiplier**: scales the order volume per tick (0.5× to 3×). Changes take effect within the next tick cycle.
 
 ### Flash Sale
 
-Select a product category from the **Flash Sale category** dropdown and click **Start**. Orders for the selected category immediately spike to 50 % of all ticks, and their unit prices are elevated to simulate promotional pricing. Click **Stop** to return to normal mode.
+Select a product category from the **Flash Sale category** dropdown and click **Start**. Half of all new orders go to the selected category, their unit prices are raised to simulate promotional pricing, and each tick generates about 2.5 times as many orders. The sidebar status changes to **Running · Flash Sale: <category>**:
+
+![The dashboard during a Flash Sale on Sports: the sidebar reads Running, Flash Sale: Sports, the Total orders tile shows a +50/tick badge, and the Orders over time chart jumps from about 80 to about 200 orders per 10-second bucket.](assets/dashboard-flash-sale.png)
+
+The jump on the right of the chart is the Flash Sale taking effect: volume rises from roughly 80 to roughly 200 orders per 10-second bucket, and the tick badge goes from **+20/tick** to **+50/tick**. Because the service caches `SIMULATION_CONTROL` for five ticks, the change can take a few seconds to show. Click **Stop** next to the Flash Sale **Start** button to return to normal mode.
 
 ### Region x Category heatmap
 
-The heatmap shows order volume for every region-category pair. Each region has a preferred product category with a graduated probability spectrum — the preferred category is roughly 3.5× more common than the least-preferred one, creating a visible diagonal:
+The heatmap shows order volume for every region-category pair, with **Revenue by region** and **Top product categories** side by side below it. Each region has a preferred product category with a graduated probability spectrum, so the preferred category is roughly 3.5 times more common than the least-preferred one. Over a few minutes this produces a visible diagonal of bright cells:
+
+![The Orders by Region x Category heatmap after a few minutes of normal traffic, with the brightest cells at North America/Electronics, Europe/Apparel, APAC/Toys and MEA/Beauty, above the Revenue by region bar chart and the Top product categories table.](assets/dashboard-heatmap-breakdowns.png)
 
 | Region | Top category |
 |---|---|
@@ -541,9 +594,11 @@ The heatmap shows order volume for every region-category pair. Each region has a
 | LATAM | Home |
 | MEA | Beauty |
 
+In this run, North America/Electronics (436), Europe/Apparel (392), APAC/Toys (452) and MEA/Beauty (388) are the brightest cells in their columns. LATAM's top two weights are close (Home 28 %, Apparel 22 %), and each tick only draws from a random subset of categories, so over a short window LATAM's second choice can briefly lead. In the **Top product categories** table, categories that appear in the current tick are highlighted in color, and the rest are grey.
+
 ### New session
 
-Click **New session** at the bottom of the **Simulation** sidebar section to clear all order history and reset the total counter to zero. Confirm the prompt to start a clean demo — useful when switching audiences or rerunning the demo from scratch.
+Click **New session** at the bottom of the **Simulation** sidebar section, then click **Confirm** in the warning that appears. The app stops the simulation, waits a few seconds for in-flight ticks to land, clears `ORDERS_HISTORY`, and resets the total counter to zero. The dashboard returns to the empty, stopped state you saw when you first opened it, which is handy when switching audiences or rerunning the demo from scratch.
 
 <!-- ------------------------ -->
 ## Clean Up
@@ -582,7 +637,7 @@ Congratulations! You built a complete real-time BI dashboard on Snowflake withou
 ### What You Learned
 - Creating an interactive table clustered on `(DATE_TRUNC('MINUTE', ORDER_TS), REGION)` for fast "last N minutes by region" aggregations
 - Attaching an interactive table to an interactive warehouse to keep the data cache warm and serve millisecond-latency queries
-- Deploying a long-running Python service on SPCS with internal OAuth authentication — no keys or passwords in the container
+- Deploying a long-running Python service on SPCS with internal OAuth authentication, with no keys or passwords in the container
 - Using `EXECUTE AS OWNER` in a stored procedure to allow an SPCS service to write to an interactive table it does not own directly
 - Building an auto-refreshing dashboard with `st.fragment(run_every=...)` that re-queries Snowflake on a configurable timer
 
@@ -594,9 +649,9 @@ Documentation:
 - [CREATE INTERACTIVE TABLE](https://docs.snowflake.com/en/sql-reference/sql/create-interactive-table)
 - [CREATE INTERACTIVE WAREHOUSE](https://docs.snowflake.com/en/sql-reference/sql/create-interactive-warehouse)
 - [Streamlit in Snowflake](https://docs.snowflake.com/en/developer-guide/streamlit/about-streamlit)
-- [st.fragment — Streamlit docs](https://docs.streamlit.io/develop/api-reference/execution-flow/st.fragment)
+- [st.fragment: Streamlit docs](https://docs.streamlit.io/develop/api-reference/execution-flow/st.fragment)
 - [Snowflake Programmatic Access Tokens](https://docs.snowflake.com/en/user-guide/programmatic-access/programmatic-access-tokens-intro)
 
 Additional Reading:
-- [Introducing Interactive Tables and Interactive Warehouses — Snowflake Engineering Blog](https://www.snowflake.com/en/engineering-blog/)
-- [Snowpark Container Services — Build and Deploy guide](https://docs.snowflake.com/en/developer-guide/snowpark-container-services/tutorials/tutorial-1)
+- [Introducing Interactive Tables and Interactive Warehouses: Snowflake Engineering Blog](https://www.snowflake.com/en/engineering-blog/)
+- [Snowpark Container Services: Build and Deploy guide](https://docs.snowflake.com/en/developer-guide/snowpark-container-services/tutorials/tutorial-1)

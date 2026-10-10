@@ -1,7 +1,7 @@
 """Live BI dashboard for the interactive streaming quickstart.
 
 Runs in Streamlit in Snowflake against the ORDERS interactive table, served by
-the SNOWHOUSE warehouse. An st.fragment refreshes only the charts every few
+the INTERACTIVE_ANALYTICS_IWH interactive warehouse. An st.fragment refreshes only the charts every few
 seconds so the dashboard tracks the incoming order stream in near real time.
 
 The data feed is driven by INTERACTIVE_ANALYTICS_SVC, a dedicated SPCS container that
@@ -16,6 +16,8 @@ Clicking "Start" from this app will resume a suspended service automatically
 before enabling the feed. Clicking "Stop" starts the idle countdown; the
 container will self-suspend ~1 hour later with no manual action needed.
 """
+
+import time
 
 import altair as alt
 import pandas as pd
@@ -132,6 +134,46 @@ def ensure_service_running() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Button callbacks
+# Streamlit runs on_click / on_change callbacks before the script body on the
+# next rerun. The live_view fragment re-runs every few seconds; if it fires
+# while a full rerun is in flight, the full rerun is restarted and an inline
+# `if st.button(...)` branch can lose its click. Callbacks are never dropped,
+# so every control that writes to SIMULATION_CONTROL uses one.
+# ---------------------------------------------------------------------------
+def _on_start() -> None:
+    ensure_service_running()
+    _start_simulation()
+
+
+def _on_stop() -> None:
+    set_control(is_running=False, mode="normal", flash_category=None)
+
+
+def _on_reset_confirm() -> None:
+    set_control(is_running=False, mode="normal", flash_category=None)
+    # The service re-reads SIMULATION_CONTROL every CTRL_CACHE_TICKS (5) ticks,
+    # so a few in-flight ticks can still land after the stop. Wait them out
+    # before truncating so the new session really starts from zero.
+    time.sleep(6)
+    session.sql(f"TRUNCATE TABLE {HISTORY}").collect()
+    set_control(total_orders=0)
+    st.session_state.pop("_confirm_reset", None)
+
+
+def _on_rate_change() -> None:
+    set_control(rate_mult=float(st.session_state["rate_mult_ui"]))
+
+
+def _on_flash_start() -> None:
+    set_control(mode="flash_sale", flash_category=st.session_state["flash_cat"])
+
+
+def _on_flash_stop() -> None:
+    set_control(mode="normal", flash_category=None)
+
+
+# ---------------------------------------------------------------------------
 # Sidebar: simulation controls
 # ---------------------------------------------------------------------------
 # No native Streamlit API for sidebar width — CSS injection is the only way.
@@ -156,15 +198,9 @@ with st.sidebar:
 
         col_start, col_stop = st.columns(2)
         with col_start:
-            if st.button(start_label, icon=":material/play_arrow:", key="sim_start", disabled=ctrl["is_running"], use_container_width=True):
-                with st.spinner("Starting simulation..."):
-                    ensure_service_running()
-                    _start_simulation()
-                st.rerun()
+            st.button(start_label, icon=":material/play_arrow:", key="sim_start", disabled=ctrl["is_running"], use_container_width=True, on_click=_on_start)
         with col_stop:
-            if st.button("Stop", icon=":material/stop:", key="sim_stop", disabled=not ctrl["is_running"], use_container_width=True):
-                set_control(is_running=False, mode="normal", flash_category=None)
-                st.rerun()
+            st.button("Stop", icon=":material/stop:", key="sim_stop", disabled=not ctrl["is_running"], use_container_width=True, on_click=_on_stop)
 
         # --- Status display -----------------------------------------------------
         st.write("")
@@ -200,12 +236,12 @@ with st.sidebar:
 
         # --- New session --------------------------------------------------------
         st.divider()
-        if st.button(
+        st.button(
             "New session", icon=":material/restart_alt:", key="new_session_btn",
             use_container_width=True,
             help="Clear all order history and start a fresh simulation.",
-        ):
-            st.session_state["_confirm_reset"] = True
+            on_click=lambda: st.session_state.update(_confirm_reset=True),
+        )
 
         if st.session_state.get("_confirm_reset"):
             st.warning(
@@ -215,23 +251,17 @@ with st.sidebar:
             )
             col_yes, col_no = st.columns(2)
             with col_yes:
-                if st.button(
+                st.button(
                     "Confirm", icon=":material/check:", key="confirm_reset_yes",
                     use_container_width=True, type="primary",
-                ):
-                    session.use_warehouse(STANDARD_WH)
-                    set_control(is_running=False, mode="normal", flash_category=None)
-                    session.sql(f"TRUNCATE TABLE {HISTORY}").collect()
-                    set_control(total_orders=0)
-                    st.session_state.pop("_confirm_reset", None)
-                    st.rerun()
+                    on_click=_on_reset_confirm,
+                )
             with col_no:
-                if st.button(
+                st.button(
                     "Cancel", icon=":material/close:", key="confirm_reset_no",
                     use_container_width=True,
-                ):
-                    st.session_state.pop("_confirm_reset", None)
-                    st.rerun()
+                    on_click=lambda: st.session_state.pop("_confirm_reset", None),
+                )
 
     with st.container(border=True):
         # --- Settings -----------------------------------------------------------
@@ -250,35 +280,32 @@ with st.sidebar:
         if "rate_mult_ui" not in st.session_state:
             st.session_state["rate_mult_ui"] = float(ctrl["rate_mult"])
         st.write("")
-        new_rate = st.slider(
+        st.slider(
             "Rate multiplier", 0.5, 3.0, step=0.1,
             key="rate_mult_ui",
+            on_change=_on_rate_change,
             help="Scales order volume per tick. Takes effect within ~5 seconds. "
                  "Impact on windowed counts builds up over the time window.",
         )
-        if abs(new_rate - ctrl["rate_mult"]) > 0.05:
-            set_control(rate_mult=new_rate)
 
         # --- Flash Sale controls ------------------------------------------------
         st.write("")
-        flash_cat = st.selectbox("Flash Sale category", CATEGORIES, index=0)
+        st.selectbox("Flash Sale category", CATEGORIES, index=0, key="flash_cat")
         col_flash, col_end = st.columns(2)
         with col_flash:
-            if st.button(
+            st.button(
                 "Start", icon=":material/play_arrow:", key="flash_start",
                 disabled=not ctrl["is_running"],
                 use_container_width=True,
-            ):
-                set_control(mode="flash_sale", flash_category=flash_cat)
-                st.rerun()
+                on_click=_on_flash_start,
+            )
         with col_end:
-            if st.button(
+            st.button(
                 "Stop", icon=":material/stop:", key="flash_stop",
                 disabled=ctrl["mode"] != "flash_sale",
                 use_container_width=True,
-            ):
-                set_control(mode="normal", flash_category=None)
-                st.rerun()
+                on_click=_on_flash_stop,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -340,9 +367,6 @@ def _fetch_history(where_hist: str, bucket_sec: int, tick_now: int = 0):
 _run_interval = None if not ctrl["is_running"] else f"{refresh_sec}s"
 @st.fragment(run_every=_run_interval)
 def live_view():
-    # Heartbeat — keeps auto-stop task from firing while dashboard is open
-    run_df(f"UPDATE {CONTROL} SET last_heartbeat_at = CURRENT_TIMESTAMP()")
-
     where = (
         f"WHERE ORDER_TS >= DATEADD('minute', -{window_min}, CURRENT_TIMESTAMP())"
     )
@@ -384,15 +408,24 @@ def live_view():
     _tick_region_set = _to_set(_tick_regions_raw)
     _tick_cat_set    = _to_set(_tick_cats_raw)
 
+    def _compact(n: float) -> str:
+        """Short number format (12.3K, 4.5M) so KPI tiles fit narrow columns."""
+        n = float(n or 0)
+        for div, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+            if abs(n) >= div:
+                return f"{n / div:.1f}{suffix}"
+        return f"{n:,.0f}"
+
     with st.container(border=True):
-        c1, c2, c3, c4, c5 = st.columns([2, 2, 3, 1.5, 2])
-        c1.metric("Total Orders", f"{ctrl_now['total_orders']:,}",
+        c1, c2, c3, c4, c5 = st.columns([1, 1.1, 1.25, 0.75, 1])
+        c1.metric("Total orders", _compact(ctrl_now["total_orders"]),
                   delta=f"+{int(tick_count):,}/tick")
-        orders_label = "Orders (accumulated)" if (not ctrl_now["is_running"] and not all_time) else ("Orders (all time)" if all_time else f"Orders (last {window_min}m)")
-        c2.metric(orders_label, f"{int(hist_kpis['ORDERS']):,}")
-        c3.metric("Revenue", f"${hist_kpis['REVENUE']:,.0f}")
-        c4.metric("Active regions", int(hist_kpis["REGIONS"]))
-        c5.metric("Orders / min", f"{hist_kpis['ORDERS_PER_MIN']:.1f}")
+        orders_label = "Orders (all)" if (all_time or not ctrl_now["is_running"]) else f"Orders ({window_min}m)"
+        c2.metric(orders_label, _compact(hist_kpis["ORDERS"]))
+        c3.metric("Revenue", f"${_compact(hist_kpis['REVENUE'])}")
+        c4.metric("Regions", int(hist_kpis["REGIONS"]))
+        _opm = hist_kpis["ORDERS_PER_MIN"]
+        c5.metric("Orders/min", "—" if pd.isna(_opm) else _compact(_opm))
 
     # Warn prominently when simulation is stopped
     if not ctrl_now["is_running"]:
@@ -457,8 +490,10 @@ def live_view():
         )
         st.altair_chart(chart, use_container_width=True, key="orders_over_time")
 
-    # Breakdown charts — 3 columns
-    col1, col2, col3 = st.columns([2, 3, 2])
+    # Breakdown charts: heatmap gets a full-width row so its cells stay
+    # legible; region revenue and top categories sit side by side below it.
+    col2 = st.container()
+    col1, col3 = st.columns(2)
 
     with col1:
         st.subheader(":material/bar_chart: Revenue by region")
@@ -539,7 +574,7 @@ def live_view():
                 )
             )
             st.altair_chart(
-                alt.layer(_heat_rect, _heat_text).properties(height=260),
+                alt.layer(_heat_rect, _heat_text).properties(height=300),
                 use_container_width=True,
                 key="region_cat_heatmap",
             )

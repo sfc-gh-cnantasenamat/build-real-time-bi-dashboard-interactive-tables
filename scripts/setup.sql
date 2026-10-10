@@ -79,6 +79,11 @@ ALTER WAREHOUSE INTERACTIVE_ANALYTICS_IWH RESUME IF SUSPENDED;
 ALTER WAREHOUSE INTERACTIVE_ANALYTICS_IWH
   ADD TABLES (INTERACTIVE_STREAMING_DEMO.PUBLIC.ORDERS);
 
+-- CREATE INTERACTIVE WAREHOUSE makes the new warehouse current for this
+-- session. Interactive warehouses cannot run DML, so switch back to the
+-- standard warehouse before the INSERT statements below.
+USE WAREHOUSE INTERACTIVE_ANALYTICS_WH;
+
 -- -------------------------------------------------------------------------
 -- 5. ORDERS_HISTORY — regular table (accumulates all ticks)
 --    Used for time-series charts and the Region x Category heatmap.

@@ -1,8 +1,8 @@
 # Build a Real-Time BI Dashboard with Interactive Tables
 
-A complete, self-contained demo that generates live synthetic e-commerce orders inside Snowflake and serves a continuously updating BI dashboard — no Kafka, no external message bus, no infrastructure outside Snowflake.
+A complete, self-contained demo that generates live synthetic e-commerce orders inside Snowflake and serves a continuously updating BI dashboard. No Kafka, no external message bus, no infrastructure outside Snowflake.
 
-![Demo screencast](quickstart/build-real-time-bi-dashboard-interactive-tables/assets/demo-screencast.gif)
+![Live Orders Dashboard walkthrough: stopped, running, Flash Sale, and the Region x Category heatmap](quickstart/build-real-time-bi-dashboard-interactive-tables/assets/demo-screencast.gif)
 
 ## Architecture
 
@@ -22,7 +22,7 @@ The system is built entirely inside a single Snowflake account across three laye
              └─ UPDATE ───────────▶ SIMULATION_CONTROL (total_orders, last_active_at)
    ```
 
-2. A **Streamlit in Snowflake** app surfaces live KPI tiles, charts, and simulation controls — it reads the current snapshot through the interactive warehouse and queries accumulated history through the standard warehouse.
+2. A **Streamlit in Snowflake** app surfaces live KPI tiles, charts, and simulation controls. It reads the current snapshot through the interactive warehouse and queries accumulated history through the standard warehouse.
 
    ```
    LIVE_ORDERS_DASHBOARD
@@ -56,7 +56,7 @@ The system is built entirely inside a single Snowflake account across three laye
 
 ### 1. Run the setup SQL
 
-Open a Snowsight worksheet and run `scripts/setup.sql` as `ACCOUNTADMIN`. The script is idempotent — safe to re-run.
+Open a Snowsight worksheet and run `scripts/setup.sql` as `ACCOUNTADMIN`. The script is idempotent, so it is safe to re-run.
 
 When the script finishes, copy the `repository_url` value from the `SHOW IMAGE REPOSITORIES` output. It looks like:
 ```
@@ -132,9 +132,9 @@ Open the app in Snowsight under **Streamlit > LIVE_ORDERS_DASHBOARD**.
 ### 5. Explore the dashboard
 
 Click **Start** in the sidebar. The simulation begins generating orders immediately. Try:
-- **Rate multiplier** — scale order volume up or down
-- **Flash Sale** — spike a product category to 50 % of all orders
-- **New session** — clear history and reset counters for a fresh demo
+- **Rate multiplier**: scale order volume up or down
+- **Flash Sale**: spike a product category to 50 % of all orders
+- **New session**: clear history and reset counters for a fresh demo
 
 ## Cost notes
 

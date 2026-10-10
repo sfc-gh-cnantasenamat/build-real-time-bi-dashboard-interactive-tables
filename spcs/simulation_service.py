@@ -1,6 +1,5 @@
 """Simulation service for the interactive streaming demo.
 
-Target account : SFDEVREL-SFDEVREL_ENTERPRISE
 DB / schema    : INTERACTIVE_STREAMING_DEMO.PUBLIC
 Role           : ACCOUNTADMIN
 Compute pool   : INTERACTIVE_ANALYTICS_POOL
@@ -51,7 +50,7 @@ CONTROL = "INTERACTIVE_STREAMING_DEMO.PUBLIC.SIMULATION_CONTROL"
 INTERVAL = float(os.environ.get("SIM_INTERVAL", "1"))
 IDLE_SUSPEND_SECS = int(os.environ.get("IDLE_SUSPEND_SECS", "3600"))
 WAREHOUSE = os.environ.get("SNOWFLAKE_WAREHOUSE", "INTERACTIVE_ANALYTICS_WH")
-ROWS_BASE = int(os.environ.get("ROWS_BASE", "5"))   # a few rows per tick
+ROWS_BASE = int(os.environ.get("ROWS_BASE", "100"))   # rows per tick before scaling
 # Re-read SIMULATION_CONTROL every N ticks; use cached value in between.
 # The SP already updates last_active_at, so idle detection still works.
 CTRL_CACHE_TICKS = int(os.environ.get("CTRL_CACHE_TICKS", "5"))
@@ -119,7 +118,7 @@ def main() -> None:
     conn = connect()
     cur = conn.cursor()
     cur.execute(f"USE WAREHOUSE {WAREHOUSE}")
-    logging.info("Connected to Snowflake as ACCOUNTADMIN (devrel)")
+    logging.info("Connected to Snowflake as ACCOUNTADMIN")
 
     # Reset idle timer on startup (SP handles last_active_at during active ticks)
     cur.execute(f"UPDATE {CONTROL} SET last_active_at = CURRENT_TIMESTAMP()")
@@ -153,7 +152,7 @@ def main() -> None:
 
                 params = _compute_tick(mode, flash_cat, rate_mult)
 
-                # SP runs as DEVREL_ADMIN_RL (owner) for INSERT OVERWRITE.
+                # SP runs as its owner (ACCOUNTADMIN) for INSERT OVERWRITE.
                 # Also updates last_active_at + total_orders inside the SP,
                 # saving one round-trip vs doing it here.
                 cur.execute(
