@@ -32,12 +32,12 @@ The system is built entirely inside a single Snowflake account across three laye
      └─ resumes INTERACTIVE_ANALYTICS_SVC when suspended
    ```
 
-3. Two background tasks handle cost management automatically: one stops an idle simulation, the other purges old history rows daily.
+3. Two background tasks act as safety nets: one clears a stale "running" flag when no ticks have landed for an hour, the other purges old history rows daily.
 
    ```
    INTERACTIVE_ANALYTICS_AUTOSTOP (serverless task, every 15 min)
-     └─ sets SIMULATION_CONTROL.is_running = FALSE when idle > 1 hour
-          → INTERACTIVE_ANALYTICS_SVC self-suspends and exits
+     └─ sets SIMULATION_CONTROL.is_running = FALSE when is_running = TRUE
+        but last_active_at is > 1 hour old (ticks stopped landing)
 
    INTERACTIVE_ANALYTICS_HISTORY_CLEANUP (warehouse task, daily 2am UTC)
      └─ uses INTERACTIVE_ANALYTICS_WH
@@ -127,7 +127,7 @@ CREATE OR REPLACE STREAMLIT INTERACTIVE_STREAMING_DEMO.PUBLIC.LIVE_ORDERS_DASHBO
   TITLE           = 'Live Orders Dashboard';
 ```
 
-Open the app in Snowsight under **Streamlit > LIVE_ORDERS_DASHBOARD**.
+Open the app in Snowsight under **Projects > Streamlit > LIVE_ORDERS_DASHBOARD**.
 
 ### 5. Explore the dashboard
 
@@ -140,7 +140,8 @@ Click **Start** in the sidebar. The simulation begins generating orders immediat
 
 - **Interactive warehouse** (`INTERACTIVE_ANALYTICS_IWH`) has a **24-hour minimum billing period** once created. Drop it as soon as you are done.
 - **Compute pool** (`INTERACTIVE_ANALYTICS_POOL`) auto-suspends after 1 hour of idle time.
-- **AUTOSTOP task** sets `is_running = FALSE` after 1 hour of dashboard inactivity, which triggers the service to self-suspend.
+- **Click Stop when you are done.** Every tick refreshes `last_active_at`, so a running simulation keeps running (and keeps the pool busy) even if nobody has the dashboard open. After you click Stop, the service self-suspends once it has been idle for `IDLE_SUSPEND_SECS` (1 hour).
+- **AUTOSTOP task** is a safety net only: it clears `is_running` if the flag is still TRUE but no tick has landed for 1 hour, for example after the service crashed.
 
 ## Clean up
 
