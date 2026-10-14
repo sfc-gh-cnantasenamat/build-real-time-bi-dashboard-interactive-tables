@@ -1,4 +1,4 @@
-"""Simulation service for the interactive streaming demo.
+"""Simulation service for the interactive warehouse demo.
 
 DB / schema    : INTERACTIVE_STREAMING_DEMO.PUBLIC
 Role           : ACCOUNTADMIN
@@ -6,7 +6,7 @@ Compute pool   : INTERACTIVE_ANALYTICS_POOL
 
 Runs as a long-lived SPCS container. Every SIM_INTERVAL seconds (default 1)
 it calls SP_SIMULATE_TICK (EXECUTE AS OWNER = ACCOUNTADMIN) which does
-INSERT OVERWRITE into the ORDERS interactive table and updates
+INSERT OVERWRITE into the ORDERS table and updates
 SIMULATION_CONTROL in one round-trip.
 
 Optimisations:

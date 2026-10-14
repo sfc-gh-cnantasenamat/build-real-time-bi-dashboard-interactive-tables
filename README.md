@@ -1,22 +1,22 @@
-# Build a Real-Time BI Dashboard with Interactive Tables
+# Build a Real-Time BI Dashboard with Interactive Warehouses
 
 A complete, self-contained demo that generates live synthetic e-commerce orders inside Snowflake and serves a continuously updating BI dashboard. No Kafka, no external message bus, no infrastructure outside Snowflake.
 
-![Live Orders Dashboard walkthrough: stopped, running, Flash Sale, and the Region x Category heatmap](quickstart/build-real-time-bi-dashboard-interactive-tables/assets/demo-screencast.gif)
+![Live Orders Dashboard walkthrough: stopped, running, Flash Sale, and the Region x Category heatmap](quickstart/build-real-time-bi-dashboard-interactive-warehouses/assets/demo-screencast.gif)
 
 ## Architecture
 
-![Architecture diagram](quickstart/build-real-time-bi-dashboard-interactive-tables/assets/architecture-diagram.png)
+![Architecture diagram](quickstart/build-real-time-bi-dashboard-interactive-warehouses/assets/architecture-diagram.png)
 
 The system is built entirely inside a single Snowflake account across three layers:
 
-1. A containerized **SPCS simulation service** runs a tight loop, calling a JavaScript stored procedure every second to generate synthetic orders. The stored procedure writes those orders into an **interactive table** whose cache is kept warm by an **interactive warehouse**, enabling sub-second reads by the dashboard.
+1. A containerized **SPCS simulation service** runs a tight loop, calling a JavaScript stored procedure every second to generate synthetic orders. The stored procedure writes those orders into a clustered **standard table** that an **interactive warehouse** queries in place (zero-copy) with a warm cache, enabling sub-second reads by the dashboard.
 
    ```
    INTERACTIVE_ANALYTICS_SVC (SPCS)
      │  polls SIMULATION_CONTROL for is_running / mode / config
      └─ CALL SP_SIMULATE_TICK
-             ├─ INSERT OVERWRITE ──▶ ORDERS (Interactive Table)
+             ├─ INSERT OVERWRITE ──▶ ORDERS (Table, clustered)
              │                            └─ INTERACTIVE_ANALYTICS_IWH serves low-latency reads
              ├─ INSERT INTO ──────▶ ORDERS_HISTORY (Table)
              └─ UPDATE ───────────▶ SIMULATION_CONTROL (total_orders, last_active_at)
@@ -48,7 +48,7 @@ The system is built entirely inside a single Snowflake account across three laye
 
 | Requirement | Notes |
 |---|---|
-| Snowflake account with `ACCOUNTADMIN` | Must be in a [region that supports interactive tables/warehouses](https://docs.snowflake.com/en/user-guide/interactive#region-availability) and [SPCS](https://docs.snowflake.com/en/developer-guide/snowpark-container-services/overview#available-regions) |
+| Snowflake account with `ACCOUNTADMIN` | Must be in a [region that supports interactive warehouses](https://docs.snowflake.com/en/user-guide/interactive#region-availability) and [SPCS](https://docs.snowflake.com/en/developer-guide/snowpark-container-services/overview#available-regions) |
 | [Docker Desktop](https://docs.docker.com/get-docker/) | For building the simulation container |
 | [Git](https://git-scm.com/) | For cloning this repo |
 
@@ -165,4 +165,4 @@ DROP DATABASE     IF EXISTS INTERACTIVE_STREAMING_DEMO;
 
 ## Full tutorial
 
-See the [step-by-step quickstart guide](quickstart/build-real-time-bi-dashboard-interactive-tables/build-real-time-bi-dashboard-interactive-tables.md) for a detailed walkthrough with explanations of each Snowflake object.
+See the [step-by-step quickstart guide](quickstart/build-real-time-bi-dashboard-interactive-warehouses/build-real-time-bi-dashboard-interactive-warehouses.md) for a detailed walkthrough with explanations of each Snowflake object.

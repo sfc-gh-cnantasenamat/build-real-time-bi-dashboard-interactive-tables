@@ -1,6 +1,6 @@
-"""Live BI dashboard for the interactive streaming quickstart.
+"""Live BI dashboard for the interactive warehouse quickstart.
 
-Runs in Streamlit in Snowflake against the ORDERS interactive table, served by
+Runs in Streamlit in Snowflake against the ORDERS standard table, served zero-copy by
 the INTERACTIVE_ANALYTICS_IWH interactive warehouse. An st.fragment refreshes only the charts every few
 seconds so the dashboard tracks the incoming order stream in near real time.
 
@@ -31,7 +31,7 @@ HISTORY = f"{DB}.PUBLIC.ORDERS_HISTORY"
 CONTROL = f"{DB}.PUBLIC.SIMULATION_CONTROL"
 CATEGORIES = ["Electronics", "Apparel", "Home", "Beauty", "Sports", "Toys"]
 STANDARD_WH    = "INTERACTIVE_ANALYTICS_WH"   # for SIMULATION_CONTROL / ORDERS_HISTORY
-INTERACTIVE_WH = "INTERACTIVE_ANALYTICS_IWH"  # for ORDERS interactive table reads
+INTERACTIVE_WH = "INTERACTIVE_ANALYTICS_IWH"  # for low-latency ORDERS reads
 
 st.set_page_config(page_title="Live Orders", page_icon="⚡", layout="wide")
 session = get_active_session()
@@ -47,7 +47,7 @@ def run_df(sql: str) -> pd.DataFrame:
 
 
 def run_df_it(sql: str) -> pd.DataFrame:
-    """Query the ORDERS interactive table via INTERACTIVE_ANALYTICS_IWH."""
+    """Query the ORDERS table via INTERACTIVE_ANALYTICS_IWH."""
     session.use_warehouse(INTERACTIVE_WH)
     try:
         return session.sql(sql).to_pandas()
@@ -181,7 +181,7 @@ st.markdown("""<style></style>""", unsafe_allow_html=True)
 
 st.title("⚡ Live Orders Dashboard")
 st.caption(
-    "Data written by `INTERACTIVE_ANALYTICS_SVC` (SPCS) · `ORDERS` is an interactive table · `INTERACTIVE_ANALYTICS_IWH` is an interactive warehouse"
+    "Data written by `INTERACTIVE_ANALYTICS_SVC` (SPCS) · `ORDERS` is a standard table · `INTERACTIVE_ANALYTICS_IWH` is an interactive warehouse"
 )
 
 with st.sidebar:
@@ -228,7 +228,7 @@ with st.sidebar:
                 # f"- Status: :{status_color}[{svc_status}] \n"
                 f"- Service: `INTERACTIVE_ANALYTICS_SVC` \n"
                 "- Compute: `INTERACTIVE_ANALYTICS_POOL` \n"
-                "- Interactive table: `ORDERS`  \n"
+                "- Table: `ORDERS` (standard)  \n"
                 "- Interactive warehouse: `INTERACTIVE_ANALYTICS_IWH` (tick reads) \n"
                 "- Standard warehouse: `INTERACTIVE_ANALYTICS_WH` (history/control)  \n"
                 "- Auto-suspends 1 h after last Stop."

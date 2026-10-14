@@ -1,9 +1,9 @@
 /* =====================================================================
-   Build a Real-Time BI Dashboard with Interactive Streaming
+   Build a Real-Time BI Dashboard with Interactive Warehouses
    ---------------------------------------------------------------------
    Single idempotent setup script — safe to re-run.
-   Run as ACCOUNTADMIN in a region that supports interactive tables,
-   interactive warehouses, and Snowpark Container Services.
+   Run as ACCOUNTADMIN in a region that supports interactive warehouses
+   and Snowpark Container Services.
 
    Region availability:
      https://docs.snowflake.com/en/user-guide/interactive#region-availability
@@ -12,7 +12,7 @@
    What this creates:
      1.  Database + schema
      2.  INTERACTIVE_ANALYTICS_WH    standard warehouse (DDL, tasks, general queries)
-     3.  ORDERS                      interactive table (current tick snapshot)
+     3.  ORDERS                      standard table (current tick snapshot)
      4.  INTERACTIVE_ANALYTICS_IWH   interactive warehouse (sub-second dashboard reads)
      5.  ORDERS_HISTORY              regular table (accumulates all ticks)
      6.  SIMULATION_CONTROL          control table (start/stop/config channel)
@@ -36,9 +36,9 @@ CREATE SCHEMA   IF NOT EXISTS INTERACTIVE_STREAMING_DEMO.PUBLIC;
 -- -------------------------------------------------------------------------
 -- 2. Standard warehouse
 --    Handles DDL, stored procedure execution, task runs, and all queries
---    against regular tables (ORDERS_HISTORY, SIMULATION_CONTROL).
---    Interactive warehouses can only query interactive tables, so this
---    separate warehouse is required for everything else.
+--    against ORDERS_HISTORY and SIMULATION_CONTROL. Interactive warehouses
+--    reject DML and CALL statements, so this separate warehouse handles
+--    every write and stored procedure call.
 -- -------------------------------------------------------------------------
 CREATE WAREHOUSE IF NOT EXISTS INTERACTIVE_ANALYTICS_WH
   WAREHOUSE_SIZE      = 'XSMALL'
@@ -49,12 +49,14 @@ CREATE WAREHOUSE IF NOT EXISTS INTERACTIVE_ANALYTICS_WH
 USE WAREHOUSE INTERACTIVE_ANALYTICS_WH;
 
 -- -------------------------------------------------------------------------
--- 3. ORDERS — interactive table (current tick snapshot)
---    CLUSTER BY matches the dashboard's WHERE clause: a recent time window
---    filtered by region.  Truncating to the minute keeps the clustering
---    key low-cardinality and prunes efficiently for "last N minutes" queries.
+-- 3. ORDERS — standard table (current tick snapshot)
+--    Interactive warehouses query standard tables directly (zero-copy), so
+--    no special table type is needed.  CLUSTER BY matches the dashboard's
+--    WHERE clause: a recent time window filtered by region.  Truncating to
+--    the minute keeps the clustering key low-cardinality and prunes
+--    efficiently for "last N minutes" queries.
 -- -------------------------------------------------------------------------
-CREATE OR REPLACE INTERACTIVE TABLE INTERACTIVE_STREAMING_DEMO.PUBLIC.ORDERS (
+CREATE OR REPLACE TABLE INTERACTIVE_STREAMING_DEMO.PUBLIC.ORDERS (
   ORDER_ID          STRING,
   ORDER_TS          TIMESTAMP_NTZ,
   REGION            STRING,
@@ -66,6 +68,8 @@ CLUSTER BY (DATE_TRUNC('MINUTE', ORDER_TS), REGION);
 
 -- -------------------------------------------------------------------------
 -- 4. Interactive warehouse — attach ORDERS so its cache stays warm
+--    ADD TABLES is optional for zero-copy queries, but it tells the
+--    warehouse to warm ORDERS proactively instead of on first query.
 --    NOTE: interactive warehouses have a 24-hour minimum billing period.
 --    Drop the warehouse in the Clean Up step as soon as you are done.
 -- -------------------------------------------------------------------------
@@ -78,6 +82,12 @@ ALTER WAREHOUSE INTERACTIVE_ANALYTICS_IWH RESUME IF SUSPENDED;
 
 ALTER WAREHOUSE INTERACTIVE_ANALYTICS_IWH
   ADD TABLES (INTERACTIVE_STREAMING_DEMO.PUBLIC.ORDERS);
+
+-- Queries that exceed the interactive warehouse's 5-second limit (for
+-- example, while the cache is still cold right after a resume) are
+-- transparently re-run on the standard warehouse instead of failing.
+ALTER WAREHOUSE INTERACTIVE_ANALYTICS_IWH
+  SET FALLBACK_WAREHOUSE = INTERACTIVE_ANALYTICS_WH;
 
 -- CREATE INTERACTIVE WAREHOUSE makes the new warehouse current for this
 -- session. Interactive warehouses cannot run DML, so switch back to the
@@ -122,8 +132,9 @@ VALUES (FALSE, 'normal', NULL, 1.0, CURRENT_TIMESTAMP(), 0);
 --      b) Appends the new rows to ORDERS_HISTORY.
 --      c) Increments TOTAL_ORDERS in SIMULATION_CONTROL.
 --
---    EXECUTE AS OWNER lets the service call the procedure without needing
---    direct INSERT OVERWRITE permission on the interactive table.
+--    EXECUTE AS OWNER lets the service call the procedure without being
+--    granted write privileges on ORDERS, ORDERS_HISTORY, or
+--    SIMULATION_CONTROL directly.
 --
 --    Each region has a preferred product category (graduated 28→8 %
 --    probability spectrum), creating a visible diagonal in the heatmap.
