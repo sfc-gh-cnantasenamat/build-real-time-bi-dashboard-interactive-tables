@@ -2,14 +2,17 @@
    Build a Real-Time BI Dashboard with Interactive Warehouses
    ---------------------------------------------------------------------
    Single idempotent setup script — safe to re-run.
-   Run as ACCOUNTADMIN in a region that supports interactive warehouses
-   and Snowpark Container Services.
+   Starts as ACCOUNTADMIN only to create a dedicated demo role, then
+   switches to that role to create and own every demo object. Run in a
+   region that supports interactive warehouses and Snowpark Container
+   Services.
 
    Region availability:
      https://docs.snowflake.com/en/user-guide/interactive#region-availability
      https://docs.snowflake.com/en/developer-guide/snowpark-container-services/overview#available-regions
 
    What this creates:
+     0.  INTERACTIVE_ANALYTICS_ROLE  demo role that owns everything below
      1.  Database + schema
      2.  INTERACTIVE_ANALYTICS_WH    standard warehouse (DDL, tasks, general queries)
      3.  ORDERS                      standard table (current tick snapshot)
@@ -25,7 +28,27 @@
      13. Seed ORDERS with 2,000 rows so the dashboard renders immediately.
    ===================================================================== */
 
+-- -------------------------------------------------------------------------
+-- 0. Demo role
+--    ACCOUNTADMIN is used only for this block.  The demo role gets just the
+--    account-level privileges it needs to create its own objects, so the
+--    long-running SPCS service never holds an ACCOUNTADMIN session.
+-- -------------------------------------------------------------------------
 USE ROLE ACCOUNTADMIN;
+
+CREATE ROLE IF NOT EXISTS INTERACTIVE_ANALYTICS_ROLE
+  COMMENT = 'Owns all objects for the real-time BI dashboard demo';
+
+GRANT CREATE DATABASE, CREATE WAREHOUSE, CREATE COMPUTE POOL,
+      EXECUTE TASK, EXECUTE MANAGED TASK
+  ON ACCOUNT TO ROLE INTERACTIVE_ANALYTICS_ROLE;
+
+GRANT ROLE INTERACTIVE_ANALYTICS_ROLE TO ROLE SYSADMIN;
+
+SET MY_USER = CURRENT_USER();
+GRANT ROLE INTERACTIVE_ANALYTICS_ROLE TO USER IDENTIFIER($MY_USER);
+
+USE ROLE INTERACTIVE_ANALYTICS_ROLE;
 
 -- -------------------------------------------------------------------------
 -- 1. Database and schema
@@ -132,9 +155,9 @@ VALUES (FALSE, 'normal', NULL, 1.0, CURRENT_TIMESTAMP(), 0);
 --      b) Appends the new rows to ORDERS_HISTORY.
 --      c) Increments TOTAL_ORDERS in SIMULATION_CONTROL.
 --
---    EXECUTE AS OWNER lets the service call the procedure without being
---    granted write privileges on ORDERS, ORDERS_HISTORY, or
---    SIMULATION_CONTROL directly.
+--    EXECUTE AS OWNER runs the writes with the owner's privileges
+--    (INTERACTIVE_ANALYTICS_ROLE), so the procedure is the single entry
+--    point that modifies ORDERS, ORDERS_HISTORY, and SIMULATION_CONTROL.
 --
 --    Each region has a preferred product category (graduated 28→8 %
 --    probability spectrum), creating a visible diagonal in the heatmap.
@@ -326,7 +349,8 @@ FROM TABLE(GENERATOR(ROWCOUNT => 2000));
 -- NOTE: Interactive warehouses have a 24-hour minimum billing period.
 --       Drop the warehouse as soon as you are finished.
 --
--- USE ROLE ACCOUNTADMIN;
+-- USE ROLE INTERACTIVE_ANALYTICS_ROLE;
+-- USE WAREHOUSE INTERACTIVE_ANALYTICS_WH;
 -- UPDATE INTERACTIVE_STREAMING_DEMO.PUBLIC.SIMULATION_CONTROL SET is_running = FALSE;
 -- ALTER TASK INTERACTIVE_STREAMING_DEMO.PUBLIC.INTERACTIVE_ANALYTICS_AUTOSTOP SUSPEND;
 -- ALTER TASK INTERACTIVE_STREAMING_DEMO.PUBLIC.INTERACTIVE_ANALYTICS_HISTORY_CLEANUP SUSPEND;
@@ -339,3 +363,6 @@ FROM TABLE(GENERATOR(ROWCOUNT => 2000));
 -- DROP WAREHOUSE    IF EXISTS INTERACTIVE_ANALYTICS_WH;
 -- DROP COMPUTE POOL IF EXISTS INTERACTIVE_ANALYTICS_POOL;
 -- DROP DATABASE     IF EXISTS INTERACTIVE_STREAMING_DEMO;
+--
+-- USE ROLE ACCOUNTADMIN;
+-- DROP ROLE         IF EXISTS INTERACTIVE_ANALYTICS_ROLE;

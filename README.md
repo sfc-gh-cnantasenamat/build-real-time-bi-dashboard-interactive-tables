@@ -48,7 +48,7 @@ The system is built entirely inside a single Snowflake account across three laye
 
 | Requirement | Notes |
 |---|---|
-| Snowflake account with `ACCOUNTADMIN` | Must be in a [region that supports interactive warehouses](https://docs.snowflake.com/en/user-guide/interactive#region-availability) and [SPCS](https://docs.snowflake.com/en/developer-guide/snowpark-container-services/overview#available-regions) |
+| Snowflake account with `ACCOUNTADMIN` (used once to create the demo role) | Must be in a [region that supports interactive warehouses](https://docs.snowflake.com/en/user-guide/interactive#region-availability) and [SPCS](https://docs.snowflake.com/en/developer-guide/snowpark-container-services/overview#available-regions) |
 | [Docker Desktop](https://docs.docker.com/get-docker/) | For building the simulation container |
 | [Git](https://git-scm.com/) | For cloning this repo |
 
@@ -56,7 +56,7 @@ The system is built entirely inside a single Snowflake account across three laye
 
 ### 1. Run the setup SQL
 
-Open a Snowsight worksheet and run `scripts/setup.sql` as `ACCOUNTADMIN`. The script is idempotent, so it is safe to re-run.
+Open a Snowsight worksheet and run `scripts/setup.sql`. It uses `ACCOUNTADMIN` only to create `INTERACTIVE_ANALYTICS_ROLE`, then switches to that role, which creates and owns every demo object. The script is idempotent, so it is safe to re-run.
 
 When the script finishes, copy the `repository_url` value from the `SHOW IMAGE REPOSITORIES` output. It looks like:
 ```
@@ -81,7 +81,7 @@ docker push <your_registry_url>/simulation:latest
 ### 3. Deploy the SPCS simulation service
 
 ```sql
-USE ROLE ACCOUNTADMIN;
+USE ROLE INTERACTIVE_ANALYTICS_ROLE;
 USE WAREHOUSE INTERACTIVE_ANALYTICS_WH;
 
 CREATE SERVICE IF NOT EXISTS
@@ -112,6 +112,8 @@ SHOW SERVICES LIKE 'INTERACTIVE_ANALYTICS_SVC'
 Using SnowSQL or the Snowflake Python connector, from the `streamlit/` directory:
 
 ```sql
+USE ROLE INTERACTIVE_ANALYTICS_ROLE;
+
 PUT file://streamlit_app.py
     @INTERACTIVE_STREAMING_DEMO.PUBLIC.APP_STAGE/streamlit/
     OVERWRITE=TRUE AUTO_COMPRESS=FALSE;
@@ -148,7 +150,8 @@ Click **Start** in the sidebar. The simulation begins generating orders immediat
 Run the commented-out `Clean up` block at the bottom of `scripts/setup.sql`, or paste:
 
 ```sql
-USE ROLE ACCOUNTADMIN;
+USE ROLE INTERACTIVE_ANALYTICS_ROLE;
+USE WAREHOUSE INTERACTIVE_ANALYTICS_WH;
 UPDATE INTERACTIVE_STREAMING_DEMO.PUBLIC.SIMULATION_CONTROL SET is_running = FALSE;
 ALTER TASK INTERACTIVE_STREAMING_DEMO.PUBLIC.INTERACTIVE_ANALYTICS_AUTOSTOP SUSPEND;
 ALTER TASK INTERACTIVE_STREAMING_DEMO.PUBLIC.INTERACTIVE_ANALYTICS_HISTORY_CLEANUP SUSPEND;
@@ -161,6 +164,9 @@ DROP WAREHOUSE    IF EXISTS INTERACTIVE_ANALYTICS_IWH;
 DROP WAREHOUSE    IF EXISTS INTERACTIVE_ANALYTICS_WH;
 DROP COMPUTE POOL IF EXISTS INTERACTIVE_ANALYTICS_POOL;
 DROP DATABASE     IF EXISTS INTERACTIVE_STREAMING_DEMO;
+
+USE ROLE ACCOUNTADMIN;
+DROP ROLE         IF EXISTS INTERACTIVE_ANALYTICS_ROLE;
 ```
 
 ## Full tutorial

@@ -1,11 +1,11 @@
 """Simulation service for the interactive warehouse demo.
 
 DB / schema    : INTERACTIVE_STREAMING_DEMO.PUBLIC
-Role           : ACCOUNTADMIN
+Role           : INTERACTIVE_ANALYTICS_ROLE
 Compute pool   : INTERACTIVE_ANALYTICS_POOL
 
 Runs as a long-lived SPCS container. Every SIM_INTERVAL seconds (default 1)
-it calls SP_SIMULATE_TICK (EXECUTE AS OWNER = ACCOUNTADMIN) which does
+it calls SP_SIMULATE_TICK (EXECUTE AS OWNER = INTERACTIVE_ANALYTICS_ROLE) which does
 INSERT OVERWRITE into the ORDERS table and updates
 SIMULATION_CONTROL in one round-trip.
 
@@ -50,6 +50,8 @@ CONTROL = "INTERACTIVE_STREAMING_DEMO.PUBLIC.SIMULATION_CONTROL"
 INTERVAL = float(os.environ.get("SIM_INTERVAL", "1"))
 IDLE_SUSPEND_SECS = int(os.environ.get("IDLE_SUSPEND_SECS", "3600"))
 WAREHOUSE = os.environ.get("SNOWFLAKE_WAREHOUSE", "INTERACTIVE_ANALYTICS_WH")
+# SPCS OAuth sessions run as the service's owner role.
+ROLE = os.environ.get("SNOWFLAKE_ROLE", "INTERACTIVE_ANALYTICS_ROLE")
 ROWS_BASE = int(os.environ.get("ROWS_BASE", "100"))   # rows per tick before scaling
 # Re-read SIMULATION_CONTROL every N ticks; use cached value in between.
 # The SP already updates last_active_at, so idle detection still works.
@@ -73,7 +75,7 @@ def connect() -> snowflake.connector.SnowflakeConnection:
         token=token,
         database="INTERACTIVE_STREAMING_DEMO",
         schema="PUBLIC",
-        role="ACCOUNTADMIN",
+        role=ROLE,
         warehouse=WAREHOUSE,
     )
 
@@ -118,7 +120,7 @@ def main() -> None:
     conn = connect()
     cur = conn.cursor()
     cur.execute(f"USE WAREHOUSE {WAREHOUSE}")
-    logging.info("Connected to Snowflake as ACCOUNTADMIN")
+    logging.info("Connected to Snowflake as %s", ROLE)
 
     # Reset idle timer on startup (SP handles last_active_at during active ticks)
     cur.execute(f"UPDATE {CONTROL} SET last_active_at = CURRENT_TIMESTAMP()")
@@ -152,7 +154,7 @@ def main() -> None:
 
                 params = _compute_tick(mode, flash_cat, rate_mult)
 
-                # SP runs as its owner (ACCOUNTADMIN) for INSERT OVERWRITE.
+                # SP runs as its owner (INTERACTIVE_ANALYTICS_ROLE) for INSERT OVERWRITE.
                 # Also updates last_active_at + total_orders inside the SP,
                 # saving one round-trip vs doing it here.
                 cur.execute(
